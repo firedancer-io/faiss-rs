@@ -20,12 +20,24 @@ fn static_link_faiss() {
         .define("BUILD_TESTING", "OFF")
         .very_verbose(true);
     let dst = cfg.build();
-    let faiss_location = dst.join("lib");
+
+    // cmake installs to lib/ on most systems, but lib64/ on RHEL/EL9.
+    // Add both to the search path so linking works on either layout.
+    let faiss_lib = dst.join("lib");
+    let faiss_lib64 = dst.join("lib64");
     let faiss_c_location = dst.join("build/c_api");
-    println!(
-        "cargo:rustc-link-search=native={}",
-        faiss_location.display()
-    );
+    if faiss_lib.is_dir() {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            faiss_lib.display()
+        );
+    }
+    if faiss_lib64.is_dir() {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            faiss_lib64.display()
+        );
+    }
     println!(
         "cargo:rustc-link-search=native={}",
         faiss_c_location.display()
@@ -34,13 +46,30 @@ fn static_link_faiss() {
     println!("cargo:rustc-link-lib=static=faiss");
     link_cxx();
     println!("cargo:rustc-link-lib=gomp");
-    println!("cargo:rustc-link-lib=blas");
-    println!("cargo:rustc-link-lib=lapack");
+    link_blas();
     if cfg!(feature = "gpu") {
         let cuda_path = cuda_lib_path();
         println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
         println!("cargo:rustc-link-lib=cudart");
         println!("cargo:rustc-link-lib=cublas");
+    }
+}
+
+#[cfg(feature = "static")]
+fn link_blas() {
+    // Try blas+lapack first; fall back to openblas (common on RHEL/EL9
+    // where only libopenblas.so is installed, not libblas.so/liblapack.so).
+    let has_blas = std::process::Command::new("sh")
+        .args(["-c", "ldconfig -p 2>/dev/null | grep -q 'libblas\\.so'"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if has_blas {
+        println!("cargo:rustc-link-lib=blas");
+        println!("cargo:rustc-link-lib=lapack");
+    } else {
+        println!("cargo:rustc-link-lib=openblas");
     }
 }
 
